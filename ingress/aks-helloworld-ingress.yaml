@@ -2,15 +2,20 @@ apiVersion: networking.k8s.io/v1beta1
 kind: Ingress
 metadata:
   name: hello-world-ingress
-  namespace: ingress-nginx
+  namespace: default
   annotations:
     kubernetes.io/ingress.class: nginx
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /$1
 spec:
+  tls:
+    - hosts:
+      - app20.netcamp.eu
+      secretName: tls-secret
   rules:
-  - http:
+  - host: app20.netcamp.eu
+    http:
       paths:
       - backend:
           serviceName: aks-helloworld

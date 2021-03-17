@@ -161,7 +161,12 @@ resource "azurerm_user_assigned_identity" "aksidentity" {
   name                = "${var.prefix}-${var.environment}-aks"
   resource_group_name = azurerm_resource_group.spoke_rg.name
   location            = azurerm_resource_group.spoke_rg.location
+}
 
+resource "azurerm_role_assignment" "aksidentityassignment" {
+  scope                = azurerm_resource_group.spoke_rg.id
+  role_definition_name = "Contributor"
+  principal_id         = azurerm_user_assigned_identity.aksidentity.principal_id
 }
 
 ####################################################################################################
@@ -209,16 +214,19 @@ resource "azurerm_kubernetes_cluster" "aks" {
     tags                  = null
   }
 
-  /*
-  identity {
-    type = "SystemAssigned"
-  }
-  */
 
+  identity {
+    type                      = "UserAssigned"
+    user_assigned_identity_id = azurerm_user_assigned_identity.aksidentity.id
+  }
+
+
+  /* 
   service_principal {
     client_id     = var.client_id
     client_secret = var.client_secret
   }
+*/
 
   addon_profile {
     oms_agent {
@@ -234,10 +242,12 @@ resource "azurerm_kubernetes_cluster" "aks" {
   role_based_access_control {
     enabled = true
 
+    /*  
     azure_active_directory {
       managed                = true
       admin_group_object_ids = [var.aad_admin_group]
-    }
+    } 
+    */
   }
 
   tags = null
@@ -255,7 +265,8 @@ locals {
   backend_address_pool_name      = "${var.prefix}-${var.environment}-appgw-beap"
   frontend_port_name             = "${var.prefix}-${var.environment}-appgw-feport"
   frontend_ip_configuration_name = "${var.prefix}-${var.environment}-appgw-feip"
-  http_setting_name              = "${var.prefix}-${var.environment}-appgw-be-htst"
+  http_setting_name              = "${var.prefix}-${var.environment}-appgw-be-httpst"
+  https_setting_name             = "${var.prefix}-${var.environment}-appgw-be-httpsst"
   listener_name                  = "${var.prefix}-${var.environment}-appgw-httplstn"
   request_routing_rule_name      = "${var.prefix}-${var.environment}-appgw-rqrt"
   redirect_configuration_name    = "${var.prefix}-${var.environment}-appgw-rdrcfg"
@@ -308,7 +319,7 @@ resource "azurerm_application_gateway" "appgw" {
   backend_http_settings {
     name                  = local.http_setting_name
     cookie_based_affinity = "Disabled"
-    path                  = "/path1/"
+    path                  = "/"
     port                  = 80
     protocol              = "Http"
     request_timeout       = 60
@@ -327,5 +338,52 @@ resource "azurerm_application_gateway" "appgw" {
     http_listener_name         = local.listener_name
     backend_address_pool_name  = local.backend_address_pool_name
     backend_http_settings_name = local.http_setting_name
+  }
+}
+
+resource "azurerm_frontdoor" "fd" {
+  name                                         = "${var.prefix}-${var.environment}-fd"
+  resource_group_name                          = azurerm_resource_group.hub_rg.name
+  enforce_backend_pools_certificate_name_check = false
+
+  frontend_endpoint {
+    name                              = "${var.prefix}-${var.environment}-fd-fe"
+    host_name                         = "${var.prefix}-${var.environment}-fd.azurefd.net"
+    custom_https_provisioning_enabled = false
+  }
+
+  backend_pool {
+    name = "${var.prefix}-${var.environment}-fd-bepool"
+    backend {
+      address     = azurerm_public_ip.appgwpip.ip_address
+      host_header = ""
+      http_port   = 80
+      https_port  = 443
+      priority    = 1
+      weight      = 50
+    }
+
+    load_balancing_name = "${var.prefix}-${var.environment}-fd-loadBalancingSettings"
+    health_probe_name   = "${var.prefix}-${var.environment}-fd-healthProbeSettings"
+  }
+
+  routing_rule {
+    name               = "https-redirect"
+    accepted_protocols = ["Http"]
+    patterns_to_match  = ["/*"]
+    frontend_endpoints = ["${var.prefix}-${var.environment}-fd-fe"]
+
+    redirect_configuration {
+      redirect_protocol = "HttpsOnly"
+      redirect_type     = "Found"
+    }
+  }
+
+  backend_pool_load_balancing {
+    name = "${var.prefix}-${var.environment}-fd-loadBalancingSettings"
+  }
+
+  backend_pool_health_probe {
+    name = "${var.prefix}-${var.environment}-fd-healthProbeSettings"
   }
 }
